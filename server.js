@@ -6,11 +6,19 @@ const {
   nextTrack,
   previousTrack,
   createPlaylistFromSearches,
-  createPlaylist
+  createPlaylist,
+  createAIPlaylist
 } = require("./spotify");
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
+
+function sendError(res, status, error) {
+  return res.status(status).json({
+    success: false,
+    error: String(error)
+  });
+}
 
 app.get("/", (req, res) => {
   res.json({ success: true, message: "SpotifyGPT API töötab." });
@@ -58,67 +66,95 @@ app.get("/callback", async (req, res) => {
 app.post("/spotify/pause", async (req, res) => {
   try {
     const result = await pauseMusic();
-    res.json(result);
+    return res.json(result);
   } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+    console.error("POST /spotify/pause error:", err);
+    return sendError(res, 500, err);
   }
 });
 
 app.post("/spotify/play", async (req, res) => {
   try {
     const result = await playMusic();
-    res.json(result);
+    return res.json(result);
   } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+    console.error("POST /spotify/play error:", err);
+    return sendError(res, 500, err);
   }
 });
 
 app.post("/spotify/next", async (req, res) => {
   try {
     const result = await nextTrack();
-    res.json(result);
+    return res.json(result);
   } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+    console.error("POST /spotify/next error:", err);
+    return sendError(res, 500, err);
   }
 });
 
 app.post("/spotify/previous", async (req, res) => {
   try {
     const result = await previousTrack();
-    res.json(result);
+    return res.json(result);
   } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+    console.error("POST /spotify/previous error:", err);
+    return sendError(res, 500, err);
   }
 });
 
 app.get("/spotify/current", async (req, res) => {
   try {
     const data = await getCurrentTrack();
-    res.json({ success: true, data });
+    return res.json({ success: true, data });
   } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+    console.error("GET /spotify/current error:", err);
+    return sendError(res, 500, err);
   }
 });
 
 app.post("/spotify/playlist", async (req, res) => {
   try {
-    const { name, tracks } = req.body;
-    const { playlistName, searches } = req.body;
+    console.log("POST /spotify/playlist body:", req.body);
 
-    const finalName = name || playlistName;
-    const finalTracks = Array.isArray(tracks) ? tracks : searches;
+    const { name, tracks } = req.body || {};
+    const { playlistName, searches } = req.body || {};
 
-    if (!finalName || !Array.isArray(finalTracks) || finalTracks.length === 0) {
+    const finalName =
+      typeof name === "string" && name.trim()
+        ? name.trim()
+        : typeof playlistName === "string" && playlistName.trim()
+        ? playlistName.trim()
+        : "";
+
+    const finalTracks = Array.isArray(tracks)
+      ? tracks
+      : Array.isArray(searches)
+      ? searches
+      : [];
+
+    const cleanedTracks = finalTracks
+      .map((t) => String(t || "").trim())
+      .filter(Boolean);
+
+    if (!finalName) {
       return res.status(400).json({
         success: false,
-        error: "Puudub playlisti nimi või lugude nimekiri. Kasuta kas 'name' + 'tracks' või 'playlistName' + 'searches'."
+        error: "Puudub playlisti nimi."
+      });
+    }
+
+    if (!cleanedTracks.length) {
+      return res.status(400).json({
+        success: false,
+        error: "Puudub lugude nimekiri."
       });
     }
 
     let result;
 
     if (typeof createPlaylist === "function") {
-      result = await createPlaylist(finalName, finalTracks);
+      result = await createPlaylist(finalName, cleanedTracks);
 
       return res.json({
         success: true,
@@ -127,17 +163,70 @@ app.post("/spotify/playlist", async (req, res) => {
         addedTracks:
           typeof result.addedTracks === "number"
             ? result.addedTracks
-            : Array.isArray(finalTracks)
-            ? finalTracks.length
-            : 0
+            : cleanedTracks.length,
+        foundTracks: result.foundTracks || [],
+        missingTracks: result.missingTracks || []
       });
     }
 
-    result = await createPlaylistFromSearches(finalName, finalTracks);
-    return res.json(result);
+    result = await createPlaylistFromSearches(finalName, cleanedTracks);
+
+    return res.json({
+      success: !!result.success,
+      playlistName: result.name || result.playlistName || finalName,
+      playlistUrl: result.url || result.playlistUrl || null,
+      addedTracks:
+        typeof result.addedTracks === "number"
+          ? result.addedTracks
+          : typeof result.tracksAdded === "number"
+          ? result.tracksAdded
+          : 0,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || [],
+      message: result.message || null
+    });
   } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+    console.error("POST /spotify/playlist error:", err);
+    return sendError(res, 500, err);
   }
+});
+
+app.post("/spotify/ai-playlist", async (req, res) => {
+  try {
+    console.log("POST /spotify/ai-playlist body:", req.body);
+
+    const prompt =
+      typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: "Prompt missing"
+      });
+    }
+
+    const result = await createAIPlaylist(prompt);
+
+    return res.json({
+      success: true,
+      playlistName: result.name || `SpotifyGPT – ${prompt}`,
+      playlistUrl: result.url || null,
+      addedTracks:
+        typeof result.addedTracks === "number" ? result.addedTracks : 0,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || []
+    });
+  } catch (err) {
+    console.error("POST /spotify/ai-playlist error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
+app.use((req, res) => {
+  return res.status(404).json({
+    success: false,
+    error: `Route not found: ${req.method} ${req.originalUrl}`
+  });
 });
 
 const PORT = process.env.PORT || 3000;
