@@ -36,7 +36,7 @@ async function refreshAccessToken() {
   return access_token;
 }
 
-async function api(url, options = {}) {
+async function api(url, options = {}, retry = true) {
   if (!access_token) {
     await refreshAccessToken();
   }
@@ -60,6 +60,12 @@ async function api(url, options = {}) {
     data = text ? JSON.parse(text) : null;
   } catch {
     data = text;
+  }
+
+  // Kui access token on aegunud, uuenda see ja proovi 1 kord uuesti
+  if (response.status === 401 && retry) {
+    await refreshAccessToken();
+    return await api(url, options, false);
   }
 
   if (!response.ok) {
@@ -147,9 +153,7 @@ async function createEmptyPlaylist(
   name,
   description = "Loodud Node.js Spotify assistendiga"
 ) {
-  const me = await api("https://api.spotify.com/v1/me");
-
-  return await api(`https://api.spotify.com/v1/users/${me.id}/playlists`, {
+  return await api("https://api.spotify.com/v1/me/playlists", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -226,7 +230,6 @@ async function createPlaylistFromSearches(playlistName, searches) {
 // 1) createPlaylist("Nimi", "kirjeldus")
 // 2) createPlaylist("Nimi", ["Artist - Song", "Artist - Song"])
 async function createPlaylist(name, descriptionOrTracks = "Loodud Node.js Spotify assistendiga") {
-  // Kui teine argument on array, siis loome playlisti koos lugudega
   if (Array.isArray(descriptionOrTracks)) {
     const result = await createPlaylistFromSearches(name, descriptionOrTracks);
 
@@ -242,7 +245,6 @@ async function createPlaylist(name, descriptionOrTracks = "Loodud Node.js Spotif
     };
   }
 
-  // Muidu käitume vana loogika järgi ja loome tühja playlisti
   return await createEmptyPlaylist(name, descriptionOrTracks);
 }
 

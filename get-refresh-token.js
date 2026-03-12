@@ -1,30 +1,45 @@
-async function refreshAccessToken() {
-  console.log("Refreshing Spotify access token...");
+require("dotenv").config();
 
-  const authBase64 = Buffer.from(client_id + ":" + client_secret).toString("base64");
-  console.log("Basic auth exists:", !!authBase64, "length:", authBase64.length);
+const client_id = process.env.SPOTIFY_CLIENT_ID;
+const client_secret = process.env.SPOTIFY_CLIENT_SECRET;
 
+const code = process.argv[2];
+
+if (!code) {
+  console.log("Kasuta nii:");
+  console.log("node get-refresh-token.js SINU_CODE");
+  process.exit(1);
+}
+
+async function main() {
   const response = await fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: "Basic " + authBase64,
+      Authorization:
+        "Basic " +
+        Buffer.from(client_id + ":" + client_secret).toString("base64"),
     },
     body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refresh_token,
+      grant_type: "authorization_code",
+      code: code,
+      redirect_uri: "http://127.0.0.1:8888/callback",
     }),
   });
 
   const data = await response.json();
 
-  console.log("Spotify token status:", response.status);
-  console.log("Spotify token response:", data);
+  console.log("\nSpotify vastus:");
+  console.log(JSON.stringify(data, null, 2));
 
   if (!response.ok) {
-    throw new Error("Tokeni uuendamine ebaõnnestus: " + JSON.stringify(data));
+    throw new Error("Refresh tokeni küsimine ebaõnnestus.");
   }
 
-  access_token = data.access_token;
-  return access_token;
+  console.log("\nUUS REFRESH TOKEN:");
+  console.log(data.refresh_token);
 }
+
+main().catch(err => {
+  console.error("Viga:", err.message);
+});
