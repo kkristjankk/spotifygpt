@@ -172,6 +172,71 @@ async function playPlaylist(playlistId) {
   };
 }
 
+async function playPlaylistByName(name) {
+  const cleanName = cleanText(name).toLowerCase();
+
+  if (!cleanName) {
+    throw new Error("Playlist name missing");
+  }
+
+  let url = "https://api.spotify.com/v1/me/playlists?limit=50";
+  let match = null;
+
+  while (url) {
+    const data = await api(url);
+    const playlists = data?.items || [];
+
+    match = playlists.find((p) =>
+      cleanText(p?.name).toLowerCase().includes(cleanName)
+    );
+
+    if (match) break;
+
+    url = data?.next || null;
+  }
+
+  if (!match) {
+    return {
+      success: false,
+      playlistName: null,
+      playlistId: null,
+      url: null,
+      message: `Playlisti "${name}" ei leitud.`,
+    };
+  }
+
+  try {
+    await playPlaylist(match.id);
+
+    return {
+      success: true,
+      playlistName: match.name,
+      playlistId: match.id,
+      url: match.external_urls?.spotify || null,
+      message: `Panin mängima playlisti "${match.name}".`,
+    };
+  } catch (err) {
+    const errorText = String(err?.message || err);
+
+    if (
+      errorText.includes("No active device found") ||
+      errorText.includes("NO_ACTIVE_DEVICE")
+    ) {
+      return {
+        success: false,
+        playlistName: match.name,
+        playlistId: match.id,
+        url: match.external_urls?.spotify || null,
+        noActiveDevice: true,
+        message:
+          `Leidsin playlisti "${match.name}", aga Spotify's ei olnud aktiivset seadet. Ava Spotify äpp ja proovi uuesti.`,
+      };
+    }
+
+    throw err;
+  }
+}
+
 async function nextTrack() {
   await api("https://api.spotify.com/v1/me/player/next", {
     method: "POST",
@@ -584,6 +649,7 @@ module.exports = {
   pauseMusic,
   playMusic,
   playPlaylist,
+  playPlaylistByName,
   nextTrack,
   previousTrack,
   searchTrack,

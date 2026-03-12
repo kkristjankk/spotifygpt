@@ -8,7 +8,8 @@ const {
   createPlaylistFromSearches,
   createPlaylist,
   createAIPlaylist,
-  createAIPlaylistAndPlay
+  createAIPlaylistAndPlay,
+  playPlaylistByName
 } = require("./spotify");
 
 const app = express();
@@ -393,6 +394,31 @@ app.post("/spotify/voice", async (req, res) => {
             typeof result.addedTracks === "number" ? result.addedTracks : 0,
           foundTracks: result.foundTracks || [],
           missingTracks: result.missingTracks || []
+        });
+      }
+
+      if (
+        prompt.includes("play my") ||
+        prompt.includes("play playlist") ||
+        prompt.includes("käivita minu")
+      ) {
+        const playlistName = prompt
+          .replace("play my", "")
+          .replace("play playlist", "")
+          .replace("käivita minu", "")
+          .replace("playlist", "")
+          .trim();
+
+        const result = await playPlaylistByName(playlistName);
+
+        return res.json({
+          success: !!result.success,
+          action: "play-playlist",
+          playlistName: result.playlistName || null,
+          playlistUrl: result.url || null,
+          playlistId: result.playlistId || null,
+          noActiveDevice: !!result.noActiveDevice,
+          message: result.message || null
         });
       }
 
