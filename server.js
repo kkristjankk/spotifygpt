@@ -26,6 +26,28 @@ app.get("/", (req, res) => {
   res.json({ success: true, message: "SpotifyGPT API töötab." });
 });
 
+app.get("/authorize", (req, res) => {
+  const scopes = [
+    "user-read-playback-state",
+    "user-modify-playback-state",
+    "playlist-read-private",
+    "playlist-read-collaborative",
+    "playlist-modify-private",
+    "playlist-modify-public"
+  ];
+
+  const params = new URLSearchParams({
+    client_id: process.env.SPOTIFY_CLIENT_ID,
+    response_type: "code",
+    redirect_uri: "https://spotifygpt.onrender.com/callback",
+    scope: scopes.join(" ")
+  });
+
+  return res.redirect(
+    `https://accounts.spotify.com/authorize?${params.toString()}`
+  );
+});
+
 app.get("/callback", async (req, res) => {
   const code = req.query.code;
 
@@ -390,7 +412,11 @@ app.post("/spotify/voice", async (req, res) => {
         });
       }
 
-      if (prompt.includes("play") || prompt.includes("resume") || prompt.includes("jätka")) {
+      if (
+        prompt.includes("play") ||
+        prompt.includes("resume") ||
+        prompt.includes("jätka")
+      ) {
         const result = await playMusic();
         return res.json({
           ...result,
