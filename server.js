@@ -7,7 +7,8 @@ const {
   previousTrack,
   createPlaylistFromSearches,
   createPlaylist,
-  createAIPlaylist
+  createAIPlaylist,
+  createAIPlaylistAndPlay
 } = require("./spotify");
 
 const app = express();
@@ -218,6 +219,40 @@ app.post("/spotify/ai-playlist", async (req, res) => {
     });
   } catch (err) {
     console.error("POST /spotify/ai-playlist error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
+app.post("/spotify/ai-dj", async (req, res) => {
+  try {
+    console.log("POST /spotify/ai-dj body:", req.body);
+
+    const prompt =
+      typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: "Prompt missing"
+      });
+    }
+
+    const result = await createAIPlaylistAndPlay(prompt);
+
+    return res.json({
+      success: !!result.success,
+      playlistName: result.name || `SpotifyGPT – ${prompt}`,
+      playlistUrl: result.url || null,
+      playlistId: result.playlistId || null,
+      addedTracks:
+        typeof result.addedTracks === "number" ? result.addedTracks : 0,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || [],
+      playbackStarted: !!result.playbackStarted,
+      message: result.message || "AI DJ playlist loodi ja käivitati."
+    });
+  } catch (err) {
+    console.error("POST /spotify/ai-dj error:", err);
     return sendError(res, 500, err);
   }
 });

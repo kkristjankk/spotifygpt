@@ -88,7 +88,11 @@ async function api(url, options = {}, retry = true) {
     }
 
     if (!response.ok) {
-      throw new Error(`Spotify API error ${response.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`);
+      throw new Error(
+        `Spotify API error ${response.status}: ${
+          typeof data === "string" ? data : JSON.stringify(data)
+        }`
+      );
     }
 
     return data;
@@ -142,6 +146,30 @@ async function playMusic() {
   });
 
   return { success: true, message: "Muusika jätkub." };
+}
+
+async function playPlaylist(playlistId) {
+  const cleanPlaylistId = cleanText(playlistId);
+
+  if (!cleanPlaylistId) {
+    throw new Error("playlistId missing");
+  }
+
+  await api("https://api.spotify.com/v1/me/player/play", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      context_uri: `spotify:playlist:${cleanPlaylistId}`,
+    }),
+  });
+
+  return {
+    success: true,
+    message: "Playlist käivitati.",
+    playlistId: cleanPlaylistId,
+  };
 }
 
 async function nextTrack() {
@@ -387,6 +415,69 @@ async function createAIPlaylist(prompt) {
   return await createPlaylistFromSearches(`SpotifyGPT – ${cleanPrompt}`, songs);
 }
 
+async function createAIPlaylistAndPlay(prompt) {
+  const cleanPrompt = cleanText(prompt);
+
+  if (!cleanPrompt) {
+    throw new Error("AI DJ prompt missing");
+  }
+
+  console.log("Generating AI DJ playlist:", cleanPrompt);
+
+  const result = await createAIPlaylist(cleanPrompt);
+
+  if (!result?.success) {
+    return {
+      ...result,
+      playbackStarted: false,
+    };
+  }
+
+  if (!result?.playlistId) {
+    throw new Error("Playlist loodi, aga playlistId puudub");
+  }
+
+  try {
+    await playPlaylist(result.playlistId);
+
+    return {
+      success: true,
+      name: result.name || `SpotifyGPT – ${cleanPrompt}`,
+      playlistId: result.playlistId,
+      url: result.url || null,
+      addedTracks:
+        typeof result.addedTracks === "number" ? result.addedTracks : 0,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || [],
+      playbackStarted: true,
+      message: "AI DJ playlist loodi ja pandi mängima.",
+    };
+  } catch (err) {
+    const errorText = String(err?.message || err);
+
+    if (
+      errorText.includes("No active device found") ||
+      errorText.includes("NO_ACTIVE_DEVICE")
+    ) {
+      return {
+        success: true,
+        name: result.name || `SpotifyGPT – ${cleanPrompt}`,
+        playlistId: result.playlistId,
+        url: result.url || null,
+        addedTracks:
+          typeof result.addedTracks === "number" ? result.addedTracks : 0,
+        foundTracks: result.foundTracks || [],
+        missingTracks: result.missingTracks || [],
+        playbackStarted: false,
+        message:
+          "Playlist loodi edukalt, aga Spotify's ei olnud aktiivset seadet. Ava Spotify äpp mõnes seadmes ja proovi uuesti.",
+      };
+    }
+
+    throw err;
+  }
+}
+
 async function showHelp() {
   console.log(`
 Kasutus:
@@ -403,6 +494,9 @@ node spotify.js playlist "Chill õhtu" "The Weeknd Blinding Lights" "Dua Lipa Le
 
 AI Playlist:
 node spotify.js ai "90s eurodance"
+
+AI DJ:
+node spotify.js ai-dj "90s eurodance"
 `);
 }
 
@@ -469,6 +563,18 @@ async function main() {
     return;
   }
 
+  if (command === "ai-dj") {
+    const prompt = process.argv.slice(3).join(" ");
+
+    if (!prompt) {
+      console.log('Näide: node spotify.js ai-dj "90s eurodance"');
+      return;
+    }
+
+    console.log(await createAIPlaylistAndPlay(prompt));
+    return;
+  }
+
   await showHelp();
 }
 
@@ -477,6 +583,7 @@ module.exports = {
   getCurrentTrack,
   pauseMusic,
   playMusic,
+  playPlaylist,
   nextTrack,
   previousTrack,
   searchTrack,
@@ -484,6 +591,7 @@ module.exports = {
   addTracksToPlaylist,
   createPlaylistFromSearches,
   createAIPlaylist,
+  createAIPlaylistAndPlay,
   refreshAccessToken,
   api,
 };
