@@ -257,6 +257,72 @@ app.post("/spotify/ai-dj", async (req, res) => {
   }
 });
 
+app.get("/test-dj", (req, res) => {
+  res.send(`
+  <html>
+  <head>
+    <title>SpotifyGPT AI DJ Test</title>
+    <style>
+      body {
+        font-family: Arial;
+        padding: 40px;
+        background: #111;
+        color: white;
+      }
+      input {
+        width: 400px;
+        padding: 10px;
+        font-size: 16px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        margin-left: 10px;
+        cursor: pointer;
+      }
+      pre {
+        margin-top: 20px;
+        background: #222;
+        padding: 20px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+
+  <body>
+
+  <h1>SpotifyGPT AI DJ</h1>
+
+  <input id="prompt" placeholder="Näiteks: 90s eurodance" />
+  <button onclick="play()">Play AI DJ</button>
+
+  <pre id="result"></pre>
+
+  <script>
+  async function play() {
+    const prompt = document.getElementById("prompt").value;
+
+    const res = await fetch("/spotify/ai-dj", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt })
+    });
+
+    const data = await res.json();
+
+    document.getElementById("result").textContent =
+      JSON.stringify(data, null, 2);
+  }
+  </script>
+
+  </body>
+  </html>
+  `);
+});
+
 app.use((req, res) => {
   return res.status(404).json({
     success: false,
