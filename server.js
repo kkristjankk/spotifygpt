@@ -323,6 +323,78 @@ app.get("/test-dj", (req, res) => {
   `);
 });
 
+app.post("/spotify/voice", async (req, res) => {
+  try {
+    const prompt =
+      typeof req.body?.prompt === "string"
+        ? req.body.prompt.toLowerCase().trim()
+        : "";
+
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: "Prompt missing"
+      });
+    }
+
+    console.log("VOICE COMMAND:", prompt);
+
+    if (prompt.includes("pause") || prompt.includes("paus")) {
+      return res.json(await pauseMusic());
+    }
+
+    if (prompt.includes("next") || prompt.includes("järgmine")) {
+      return res.json(await nextTrack());
+    }
+
+    if (prompt.includes("previous") || prompt.includes("eelmine")) {
+      return res.json(await previousTrack());
+    }
+
+    if (prompt.includes("mis mängib") || prompt.includes("what is playing")) {
+      const data = await getCurrentTrack();
+      return res.json({
+        success: true,
+        data
+      });
+    }
+
+    if (prompt.includes("loo playlist") || prompt.includes("create playlist")) {
+      const result = await createAIPlaylist(prompt);
+
+      return res.json({
+        success: true,
+        action: "playlist-created",
+        playlistName: result.name || null,
+        playlistUrl: result.url || null,
+        addedTracks:
+          typeof result.addedTracks === "number" ? result.addedTracks : 0,
+        foundTracks: result.foundTracks || [],
+        missingTracks: result.missingTracks || []
+      });
+    }
+
+    const result = await createAIPlaylistAndPlay(prompt);
+
+    return res.json({
+      success: !!result.success,
+      action: "ai-dj",
+      playlistName: result.name || null,
+      playlistUrl: result.url || null,
+      playlistId: result.playlistId || null,
+      addedTracks:
+        typeof result.addedTracks === "number" ? result.addedTracks : 0,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || [],
+      playbackStarted: !!result.playbackStarted,
+      message: result.message || null
+    });
+  } catch (err) {
+    console.error("VOICE error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
 app.use((req, res) => {
   return res.status(404).json({
     success: false,
