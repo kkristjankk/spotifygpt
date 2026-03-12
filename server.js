@@ -106,6 +106,8 @@ app.post("/spotify/playlist", async (req, res) => {
   }
 });
 
+const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
   console.log(`Server töötab pordil ${PORT}`);
 });
