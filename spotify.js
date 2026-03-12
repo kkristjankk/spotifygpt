@@ -10,6 +10,7 @@ console.log("client_secret olemas:", !!client_secret, "length:", client_secret?.
 console.log("refresh_token olemas:", !!refresh_token, "length:", refresh_token?.length);
 
 let access_token = "";
+let last_token_scope = null;
 
 async function refreshAccessToken() {
   const response = await fetch("https://accounts.spotify.com/api/token", {
@@ -33,6 +34,14 @@ async function refreshAccessToken() {
   }
 
   access_token = data.access_token;
+  last_token_scope = data.scope || null;
+
+  console.log("TOKEN REFRESH DEBUG");
+  console.log("access_token olemas:", !!access_token);
+  console.log("returned scope:", last_token_scope);
+  console.log("token_type:", data.token_type);
+  console.log("expires_in:", data.expires_in);
+
   return access_token;
 }
 
@@ -62,13 +71,22 @@ async function api(url, options = {}, retry = true) {
     data = text;
   }
 
-  // Kui access token on aegunud, uuenda see ja proovi 1 kord uuesti
   if (response.status === 401 && retry) {
+    console.log("API DEBUG - 401, proovin tokeni uuendada ja retry");
     await refreshAccessToken();
     return await api(url, options, false);
   }
 
   if (!response.ok) {
+    console.log("API ERROR DEBUG");
+    console.log("url:", url);
+    console.log("method:", options.method || "GET");
+    console.log("status:", response.status);
+    console.log("response:", data);
+    console.log("last_token_scope:", last_token_scope);
+    console.log("www-authenticate:", response.headers.get("www-authenticate"));
+    console.log("retry-after:", response.headers.get("retry-after"));
+
     throw new Error(`Spotify API viga (${response.status}): ${JSON.stringify(data)}`);
   }
 
@@ -92,7 +110,7 @@ async function getCurrentTrack() {
   return {
     isPlaying: true,
     track: data.item.name,
-    artists: data.item.artists.map(a => a.name).join(", "),
+    artists: data.item.artists.map((a) => a.name).join(", "),
     album: data.item.album.name,
     spotifyUrl: data.item.external_urls?.spotify || null,
   };
@@ -142,18 +160,26 @@ async function searchTrack(query) {
   const data = await api(url);
 
   if (!data?.tracks?.items?.length) {
+    console.log("SEARCH DEBUG - ei leidnud lugu:", query);
     return null;
   }
 
-  return data.tracks.items[0];
+  const track = data.tracks.items[0];
+  console.log("SEARCH DEBUG - leitud:", {
+    query,
+    name: track.name,
+    artists: track.artists.map((a) => a.name).join(", "),
+    uri: track.uri,
+  });
+
+  return track;
 }
 
-// Sisemine funktsioon: loob tühja playlisti
 async function createEmptyPlaylist(
   name,
   description = "Loodud Node.js Spotify assistendiga"
 ) {
-  return await api("https://api.spotify.com/v1/me/playlists", {
+  const playlist = await api("https://api.spotify.com/v1/me/playlists", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -164,18 +190,50 @@ async function createEmptyPlaylist(
       public: false,
     }),
   });
+
+  console.log("PLAYLIST CREATE DEBUG");
+  console.log("playlist.id:", playlist?.id);
+  console.log("playlist.name:", playlist?.name);
+  console.log("playlist.owner.id:", playlist?.owner?.id);
+  console.log("playlist.public:", playlist?.public);
+  console.log("playlist.collaborative:", playlist?.collaborative);
+  console.log("playlist.snapshot_id:", playlist?.snapshot_id);
+
+  return playlist;
 }
 
 async function addTracksToPlaylist(playlistId, uris) {
-  return await api(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      uris,
-    }),
-  });
+  console.log("ADD TRACKS DEBUG");
+  console.log("playlistId:", playlistId);
+  console.log("uris:", uris);
+  console.log("uri count:", Array.isArray(uris) ? uris.length : 0);
+
+  try {
+    console.log("ADD TRACKS TRY 1 - JSON body");
+
+    return await api(`https://api.spotify.com/v1/playlists/${playlistId}/items`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        uris,
+      }),
+    });
+  } catch (err) {
+    console.log("ADD TRACKS TRY 1 FAILED:", String(err));
+    console.log("ADD TRACKS TRY 2 - query params fallback");
+
+    const url =
+      `https://api.spotify.com/v1/playlists/${playlistId}/items?` +
+      new URLSearchParams({
+        uris: uris.join(","),
+      }).toString();
+
+    return await api(url, {
+      method: "POST",
+    });
+  }
 }
 
 async function createPlaylistFromSearches(playlistName, searches) {
@@ -183,11 +241,15 @@ async function createPlaylistFromSearches(playlistName, searches) {
   const foundTracks = [];
   const missingTracks = [];
 
+  console.log("CREATE PLAYLIST DEBUG");
+  console.log("playlistName:", playlistName);
+  console.log("searches:", searches);
+
   for (const q of searches) {
     const track = await searchTrack(q);
 
     if (track) {
-      const artists = track.artists.map(a => a.name).join(", ");
+      const artists = track.artists.map((a) => a.name).join(", ");
       uris.push(track.uri);
       foundTracks.push({
         name: track.name,
@@ -199,6 +261,10 @@ async function createPlaylistFromSearches(playlistName, searches) {
     }
   }
 
+  console.log("FOUND TRACKS DEBUG");
+  console.log("foundTracks:", foundTracks);
+  console.log("missingTracks:", missingTracks);
+
   if (!uris.length) {
     return {
       success: false,
@@ -208,12 +274,26 @@ async function createPlaylistFromSearches(playlistName, searches) {
     };
   }
 
+  const me = await getMe();
+  console.log("ME DEBUG");
+  console.log("me.id:", me?.id);
+  console.log("me.display_name:", me?.display_name);
+  console.log("me.email:", me?.email);
+
   const playlist = await createEmptyPlaylist(
     playlistName,
     "Loodud automaatselt sinu soovide põhjal"
   );
 
-  await addTracksToPlaylist(playlist.id, uris);
+  console.log("PLAYLIST BEFORE ADD DEBUG");
+  console.log("playlist.id:", playlist?.id);
+  console.log("playlist.owner.id:", playlist?.owner?.id);
+  console.log("playlist.external_urls:", playlist?.external_urls);
+
+  const addResult = await addTracksToPlaylist(playlist.id, uris);
+
+  console.log("ADD RESULT DEBUG");
+  console.log(addResult);
 
   return {
     success: true,
@@ -226,10 +306,10 @@ async function createPlaylistFromSearches(playlistName, searches) {
   };
 }
 
-// Ühilduv createPlaylist:
-// 1) createPlaylist("Nimi", "kirjeldus")
-// 2) createPlaylist("Nimi", ["Artist - Song", "Artist - Song"])
-async function createPlaylist(name, descriptionOrTracks = "Loodud Node.js Spotify assistendiga") {
+async function createPlaylist(
+  name,
+  descriptionOrTracks = "Loodud Node.js Spotify assistendiga"
+) {
   if (Array.isArray(descriptionOrTracks)) {
     const result = await createPlaylistFromSearches(name, descriptionOrTracks);
 
@@ -261,6 +341,9 @@ node spotify.js prev
 
 Playlist:
 node spotify.js playlist "Chill õhtu" "The Weeknd Blinding Lights" "Dua Lipa Levitating" "Daft Punk Get Lucky"
+
+Lisa lood olemasolevasse playlisti:
+node spotify.js addtest PLAYLIST_ID "spotify:track:69kOkLUCkxIZYexIgSG8rq" "spotify:track:6Xe9wT5xeZETPwtaP2ynUz"
 `);
 }
 
@@ -315,6 +398,19 @@ async function main() {
     return;
   }
 
+  if (command === "addtest") {
+    const playlistId = process.argv[3];
+    const uris = process.argv.slice(4);
+
+    if (!playlistId || uris.length === 0) {
+      console.log('Näide: node spotify.js addtest PLAYLIST_ID "spotify:track:..." "spotify:track:..."');
+      return;
+    }
+
+    console.log(await addTracksToPlaylist(playlistId, uris));
+    return;
+  }
+
   await showHelp();
 }
 
@@ -334,7 +430,7 @@ module.exports = {
 };
 
 if (require.main === module) {
-  main().catch(err => {
+  main().catch((err) => {
     console.error("Viga:", err);
   });
 }
