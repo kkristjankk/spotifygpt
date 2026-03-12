@@ -339,56 +339,95 @@ app.post("/spotify/voice", async (req, res) => {
 
     console.log("VOICE COMMAND:", prompt);
 
-    if (prompt.includes("pause") || prompt.includes("paus")) {
-      return res.json(await pauseMusic());
-    }
+    try {
+      if (prompt.includes("pause") || prompt.includes("paus")) {
+        const result = await pauseMusic();
+        return res.json({
+          ...result,
+          action: "pause"
+        });
+      }
 
-    if (prompt.includes("next") || prompt.includes("järgmine")) {
-      return res.json(await nextTrack());
-    }
+      if (prompt.includes("next") || prompt.includes("järgmine")) {
+        const result = await nextTrack();
+        return res.json({
+          ...result,
+          action: "next"
+        });
+      }
 
-    if (prompt.includes("previous") || prompt.includes("eelmine")) {
-      return res.json(await previousTrack());
-    }
+      if (prompt.includes("previous") || prompt.includes("eelmine")) {
+        const result = await previousTrack();
+        return res.json({
+          ...result,
+          action: "previous"
+        });
+      }
 
-    if (prompt.includes("mis mängib") || prompt.includes("what is playing")) {
-      const data = await getCurrentTrack();
+      if (prompt.includes("play") || prompt.includes("resume") || prompt.includes("jätka")) {
+        const result = await playMusic();
+        return res.json({
+          ...result,
+          action: "play"
+        });
+      }
+
+      if (prompt.includes("mis mängib") || prompt.includes("what is playing")) {
+        const data = await getCurrentTrack();
+        return res.json({
+          success: true,
+          action: "current-track",
+          data
+        });
+      }
+
+      if (prompt.includes("loo playlist") || prompt.includes("create playlist")) {
+        const result = await createAIPlaylist(prompt);
+
+        return res.json({
+          success: true,
+          action: "playlist-created",
+          playlistName: result.name || null,
+          playlistUrl: result.url || null,
+          addedTracks:
+            typeof result.addedTracks === "number" ? result.addedTracks : 0,
+          foundTracks: result.foundTracks || [],
+          missingTracks: result.missingTracks || []
+        });
+      }
+
+      const result = await createAIPlaylistAndPlay(prompt);
+
       return res.json({
-        success: true,
-        data
-      });
-    }
-
-    if (prompt.includes("loo playlist") || prompt.includes("create playlist")) {
-      const result = await createAIPlaylist(prompt);
-
-      return res.json({
-        success: true,
-        action: "playlist-created",
+        success: !!result.success,
+        action: "ai-dj",
         playlistName: result.name || null,
         playlistUrl: result.url || null,
+        playlistId: result.playlistId || null,
         addedTracks:
           typeof result.addedTracks === "number" ? result.addedTracks : 0,
         foundTracks: result.foundTracks || [],
-        missingTracks: result.missingTracks || []
+        missingTracks: result.missingTracks || [],
+        playbackStarted: !!result.playbackStarted,
+        message: result.message || null
       });
+    } catch (err) {
+      const errorText = String(err?.message || err);
+
+      if (
+        errorText.includes("No active device found") ||
+        errorText.includes("NO_ACTIVE_DEVICE")
+      ) {
+        return res.json({
+          success: false,
+          noActiveDevice: true,
+          message:
+            "Spotify's ei ole aktiivset seadet. Ava Spotify iPhone'is, arvutis või mõnes muus seadmes ja proovi uuesti."
+        });
+      }
+
+      throw err;
     }
-
-    const result = await createAIPlaylistAndPlay(prompt);
-
-    return res.json({
-      success: !!result.success,
-      action: "ai-dj",
-      playlistName: result.name || null,
-      playlistUrl: result.url || null,
-      playlistId: result.playlistId || null,
-      addedTracks:
-        typeof result.addedTracks === "number" ? result.addedTracks : 0,
-      foundTracks: result.foundTracks || [],
-      missingTracks: result.missingTracks || [],
-      playbackStarted: !!result.playbackStarted,
-      message: result.message || null
-    });
   } catch (err) {
     console.error("VOICE error:", err);
     return sendError(res, 500, err);
