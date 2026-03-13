@@ -810,6 +810,134 @@ async function createTastePlaylist(stylePrompt = "") {
   };
 }
 
+async function createDiscoverPlaylist(stylePrompt = "") {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY missing");
+  }
+
+  const cleanStyle = cleanText(stylePrompt);
+
+  console.log("Analyzing taste and generating discover playlist...");
+
+  const savedTracks = await getMySavedTracks(60);
+  const playlists = await getMyPlaylists(10);
+
+  const playlistTracks = [];
+  for (const playlist of playlists) {
+    try {
+      const tracks = await getPlaylistTracks(playlist.id, 30);
+      playlistTracks.push(...tracks);
+    } catch (err) {
+      console.log(
+        `Skipping playlist ${playlist.name || playlist.id}:`,
+        err.message || String(err)
+      );
+    }
+  }
+
+  const tasteProfile = buildTasteProfile({
+    savedTracks,
+    playlistTracks,
+  });
+
+  const topArtistNames = tasteProfile.topArtists.map((a) => a.name);
+  const topTrackNames = tasteProfile.topTracks.map((t) => t.name);
+
+  const prompt = `
+User music taste summary:
+- Analyzed tracks: ${tasteProfile.totalTracksAnalyzed}
+- Top artists: ${topArtistNames.join(", ")}
+- Top tracks: ${topTrackNames.slice(0, 12).join(", ")}
+
+${cleanStyle ? `Requested style/mood: ${cleanStyle}` : ""}
+
+Task:
+1. Recommend 15 songs for a "discover weekly" style playlist.
+2. Stay close to the user's taste, but avoid the most obvious mainstream picks.
+3. Prefer slightly less-known or adjacent artists.
+4. Avoid repeating the user's top tracks.
+5. Avoid recommending tracks by the user's most repeated top artists unless truly necessary.
+6. Keep it cohesive and Spotify-searchable.
+7. ${cleanStyle ? "Respect the requested style/mood." : "No extra style constraint."}
+
+Return JSON in this exact shape:
+{
+  "summary": ["..."],
+  "artists": ["Artist 1", "Artist 2"],
+  "tracks": ["Artist - Song", "Artist - Song"]
+}
+`.trim();
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: 0.8,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a music discovery assistant. Return only valid JSON.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error("OpenAI error: " + JSON.stringify(data));
+  }
+
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenAI returned empty discovery content");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("OpenAI returned invalid JSON: " + content);
+  }
+
+  const tracks = Array.isArray(parsed.tracks) ? parsed.tracks : [];
+  const artists = Array.isArray(parsed.artists) ? parsed.artists : [];
+  const summary = Array.isArray(parsed.summary) ? parsed.summary : [];
+
+  if (!tracks.length) {
+    throw new Error("AI ei tagastanud ühtegi discover-lugu.");
+  }
+
+  const playlistName = cleanStyle
+    ? `SpotifyGPT – Discover (${cleanStyle})`
+    : "SpotifyGPT – Discover";
+
+  const result = await createPlaylistFromSearches(playlistName, tracks);
+
+  return {
+    success: true,
+    playlistName: result.name,
+    playlistUrl: result.url,
+    playlistId: result.playlistId,
+    addedTracks: result.addedTracks,
+    foundTracks: result.foundTracks || [],
+    missingTracks: result.missingTracks || [],
+    recommendedArtists: artists,
+    discoverSummary: summary,
+    stylePrompt: cleanStyle || null,
+  };
+}
+
 /* -------------------- VOICE COMMANDS -------------------- */
 
 function extractStyleFromPrompt(prompt) {
@@ -1066,6 +1194,69 @@ async function handleVoiceCommand(prompt) {
     }
 
     if (
+      /(discover|avasta|something new|midagi uut|discover weekly)/i.test(input) &&
+      /(play|mängi|tee|create|make|loo|generate)/i.test(input)
+    ) {
+      const style = extractStyleFromPrompt(prompt)
+        .replace(/\bdiscover weekly\b/gi, "")
+        .replace(/\bsomething new\b/gi, "")
+        .replace(/\bmidagi uut\b/gi, "")
+        .replace(/\bdiscover\b/gi, "")
+        .replace(/\bavasta\b/gi, "")
+        .trim();
+
+      const result = await createDiscoverPlaylist(style);
+
+      let playbackStarted = false;
+      let message =
+        style
+          ? `Lõin discover-playlisti stiilis "${style}".`
+          : "Lõin sulle discover-playlisti.";
+
+      if (result?.playlistId) {
+        try {
+          await playPlaylist(result.playlistId);
+          playbackStarted = true;
+          message =
+            style
+              ? `Lõin ja panin mängima discover-playlisti stiilis "${style}".`
+              : "Lõin ja panin mängima discover-playlisti.";
+        } catch (playErr) {
+          if (isNoActiveDeviceError(playErr)) {
+            return {
+              success: true,
+              action: "discover_playlist",
+              playlistName: result.playlistName || null,
+              playlistUrl: result.playlistUrl || null,
+              playlistId: result.playlistId || null,
+              addedTracks: result.addedTracks || 0,
+              foundTracks: result.foundTracks || [],
+              missingTracks: result.missingTracks || [],
+              playbackStarted: false,
+              noActiveDevice: true,
+              message:
+                "Discover-playlist loodi, aga Spotify's ei olnud aktiivset seadet. Ava Spotify äpp ja proovi uuesti."
+            };
+          }
+          throw playErr;
+        }
+      }
+
+      return {
+        success: true,
+        action: "discover_playlist",
+        playlistName: result.playlistName || null,
+        playlistUrl: result.playlistUrl || null,
+        playlistId: result.playlistId || null,
+        addedTracks: result.addedTracks || 0,
+        foundTracks: result.foundTracks || [],
+        missingTracks: result.missingTracks || [],
+        playbackStarted,
+        message
+      };
+    }
+
+    if (
       /^(play|mängi|pane mängima)\s+.+/i.test(input) &&
       !/(playlist|lugu|song|track)/i.test(input)
     ) {
@@ -1160,6 +1351,10 @@ node spotify.js taste "melodic house"
 Taste playlist:
 node spotify.js taste-playlist
 node spotify.js taste-playlist "melodic house"
+
+Discover playlist:
+node spotify.js discover
+node spotify.js discover "melodic house"
 `);
 }
 
@@ -1250,6 +1445,12 @@ async function main() {
     return;
   }
 
+  if (command === "discover") {
+    const style = process.argv.slice(3).join(" ");
+    console.log(await createDiscoverPlaylist(style));
+    return;
+  }
+
   await showHelp();
 }
 
@@ -1274,6 +1475,7 @@ module.exports = {
   buildTasteProfile,
   recommendFromTaste,
   createTastePlaylist,
+  createDiscoverPlaylist,
   handleVoiceCommand,
   refreshAccessToken,
   api,
