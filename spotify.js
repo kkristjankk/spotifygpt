@@ -1193,6 +1193,19 @@ async function handleVoiceCommand(prompt) {
       };
     }
 
+    if (prompt.includes("like ")) {
+      const artist = prompt.split("like ")[1];
+      const result = await createSimilarArtistPlaylist(artist);
+     
+      return {
+       success: true,
+       action: "similar_artist_playlist",
+       playlistName: result.name,
+       playlistUrl: result.url,
+       playbackStarted: true
+     };
+    }
+
     if (
       /(discover|avasta|something new|midagi uut|discover weekly)/i.test(input) &&
       /(play|mängi|tee|create|make|loo|generate)/i.test(input)
@@ -1455,6 +1468,91 @@ async function main() {
   await showHelp();
 }
 
+async function createSimilarArtistPlaylist(artistName) {
+
+  const search = await api(
+    "https://api.spotify.com/v1/search?q=" +
+      encodeURIComponent(artistName) +
+      "&type=artist&limit=1"
+  );
+
+  const artist = search?.artists?.items?.[0];
+
+  if (!artist) {
+    throw new Error("Artist not found");
+  }
+
+  const related = await api(
+    "https://api.spotify.com/v1/artists/" +
+      artist.id +
+      "/related-artists"
+  );
+
+  const artists = related?.artists?.slice(0, 10) || [];
+
+  const uris = [];
+
+  for (const a of artists) {
+
+    const top = await api(
+      "https://api.spotify.com/v1/artists/" +
+        a.id +
+        "/top-tracks?market=US"
+    );
+
+    if (top?.tracks?.length) {
+      uris.push(top.tracks[0].uri);
+    }
+  }
+
+  if (!uris.length) {
+    throw new Error("No tracks found for similar artists");
+  }
+
+  const playlist = await createEmptyPlaylist(
+    `SpotifyGPT – Similar to ${artistName}`,
+    `Artists similar to ${artistName}`
+  );
+
+  const addResult = await addTracksToPlaylist(playlist.id, uris);
+
+  return {
+    name: playlist.name,
+    id: playlist.id,
+    url: playlist.external_urls?.spotify || null,
+    addedTracks: addResult.addedTracks || uris.length
+  };
+}
+
+  const related = await spotifyFetch(
+    "https://api.spotify.com/v1/artists/" +
+      artist.id +
+      "/related-artists"
+  );
+
+  const artists = related.artists.slice(0, 10);
+
+  const tracks = [];
+
+  for (const a of artists) {
+
+    const top = await spotifyFetch(
+      "https://api.spotify.com/v1/artists/" +
+        a.id +
+        "/top-tracks?market=US"
+    );
+
+    if (top.tracks.length) {
+      tracks.push(top.tracks[0].uri);
+    }
+  }
+
+  return createPlaylistFromUris(
+    `SpotifyGPT – Similar to ${artistName}`,
+    tracks
+  );
+}
+
 module.exports = {
   getMe,
   getCurrentTrack,
@@ -1479,6 +1577,7 @@ module.exports = {
   createDiscoverPlaylist,
   handleVoiceCommand,
   refreshAccessToken,
+  createSimilarArtistPlaylist,
   api,
 };
 
