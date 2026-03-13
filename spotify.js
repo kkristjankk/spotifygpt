@@ -543,6 +543,231 @@ async function createAIPlaylistAndPlay(prompt) {
   }
 }
 
+/* -------------------- TASTE ANALYSIS -------------------- */
+
+async function getMySavedTracks(limit = 50) {
+  const finalLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+  let url = `https://api.spotify.com/v1/me/tracks?limit=${Math.min(finalLimit, 50)}`;
+  const items = [];
+
+  while (url && items.length < finalLimit) {
+    const data = await api(url);
+    const batch = Array.isArray(data?.items) ? data.items : [];
+    items.push(...batch);
+    url = data?.next || null;
+
+    if (items.length >= finalLimit) break;
+  }
+
+  return items.slice(0, finalLimit).map((item) => ({
+    addedAt: item.added_at,
+    id: item.track?.id || null,
+    name: item.track?.name || null,
+    artists: (item.track?.artists || []).map((a) => a.name),
+    artistIds: (item.track?.artists || []).map((a) => a.id).filter(Boolean),
+    album: item.track?.album?.name || null,
+    spotifyUrl: item.track?.external_urls?.spotify || null,
+  }));
+}
+
+async function getMyPlaylists(limit = 50) {
+  const finalLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+  let url = `https://api.spotify.com/v1/me/playlists?limit=${Math.min(finalLimit, 50)}`;
+  const playlists = [];
+
+  while (url && playlists.length < finalLimit) {
+    const data = await api(url);
+    const batch = Array.isArray(data?.items) ? data.items : [];
+    playlists.push(...batch);
+    url = data?.next || null;
+
+    if (playlists.length >= finalLimit) break;
+  }
+
+  return playlists.slice(0, finalLimit).map((p) => ({
+    id: p.id,
+    name: p.name,
+    description: p.description || "",
+    owner: p.owner?.display_name || null,
+    totalTracks: p.tracks?.total || 0,
+    spotifyUrl: p.external_urls?.spotify || null,
+  }));
+}
+
+async function getPlaylistTracks(playlistId, limit = 100) {
+  const cleanPlaylistId = cleanText(playlistId);
+  if (!cleanPlaylistId) {
+    throw new Error("playlistId missing");
+  }
+
+  const finalLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+  let url =
+    `https://api.spotify.com/v1/playlists/${cleanPlaylistId}/tracks?limit=${Math.min(finalLimit, 100)}`;
+  const items = [];
+
+  while (url && items.length < finalLimit) {
+    const data = await api(url);
+    const batch = Array.isArray(data?.items) ? data.items : [];
+    items.push(...batch);
+    url = data?.next || null;
+
+    if (items.length >= finalLimit) break;
+  }
+
+  return items
+    .slice(0, finalLimit)
+    .map((item) => item?.track)
+    .filter(Boolean)
+    .map((track) => ({
+      id: track.id || null,
+      name: track.name || null,
+      artists: (track.artists || []).map((a) => a.name),
+      artistIds: (track.artists || []).map((a) => a.id).filter(Boolean),
+      album: track.album?.name || null,
+      spotifyUrl: track.external_urls?.spotify || null,
+    }));
+}
+
+function buildTasteProfile({ savedTracks = [], playlistTracks = [] }) {
+  const allTracks = [...savedTracks, ...playlistTracks];
+
+  const artistCount = new Map();
+  const trackCount = new Map();
+
+  for (const track of allTracks) {
+    const artistNames = Array.isArray(track?.artists) ? track.artists : [];
+    for (const artist of artistNames) {
+      artistCount.set(artist, (artistCount.get(artist) || 0) + 1);
+    }
+
+    const key = `${artistNames.join(", ")} - ${track?.name || "Unknown track"}`;
+    trackCount.set(key, (trackCount.get(key) || 0) + 1);
+  }
+
+  const topArtists = [...artistCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([name, count]) => ({ name, count }));
+
+  const topTracks = [...trackCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([name, count]) => ({ name, count }));
+
+  return {
+    totalTracksAnalyzed: allTracks.length,
+    topArtists,
+    topTracks,
+  };
+}
+
+async function recommendFromTaste({
+  savedTracksLimit = 50,
+  playlistsLimit = 8,
+  tracksPerPlaylist = 30,
+} = {}) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY missing");
+  }
+
+  const savedTracks = await getMySavedTracks(savedTracksLimit);
+  const playlists = await getMyPlaylists(playlistsLimit);
+
+  const playlistTracks = [];
+  for (const playlist of playlists) {
+    try {
+      const tracks = await getPlaylistTracks(playlist.id, tracksPerPlaylist);
+      playlistTracks.push(...tracks);
+    } catch (err) {
+      console.log(
+        `Skipping playlist ${playlist.name || playlist.id}:`,
+        err.message || String(err)
+      );
+    }
+  }
+
+  const tasteProfile = buildTasteProfile({
+    savedTracks,
+    playlistTracks,
+  });
+
+  const prompt = `
+User music taste summary:
+- Analyzed tracks: ${tasteProfile.totalTracksAnalyzed}
+- Top artists: ${tasteProfile.topArtists.map((a) => `${a.name} (${a.count})`).join(", ")}
+- Top tracks: ${tasteProfile.topTracks.slice(0, 10).map((t) => `${t.name} (${t.count})`).join(", ")}
+
+Task:
+1. Describe the user's taste in 4-6 short bullet points.
+2. Recommend 10 similar artists.
+3. Recommend 15 songs in a similar style.
+4. Keep recommendations discoverable but still close to the user's taste.
+
+Return JSON in this exact shape:
+{
+  "summary": ["..."],
+  "artists": ["Artist 1", "Artist 2"],
+  "tracks": ["Artist - Song", "Artist - Song"]
+}
+`.trim();
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: 0.7,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a music recommendation assistant. Return only valid JSON.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error("OpenAI error: " + JSON.stringify(data));
+  }
+
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenAI returned empty recommendation content");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("OpenAI returned invalid JSON: " + content);
+  }
+
+  return {
+    tasteProfile,
+    summary: Array.isArray(parsed.summary) ? parsed.summary : [],
+    artists: Array.isArray(parsed.artists) ? parsed.artists : [],
+    tracks: Array.isArray(parsed.tracks) ? parsed.tracks : [],
+    sampledPlaylists: playlists.map((p) => ({
+      id: p.id,
+      name: p.name,
+      totalTracks: p.totalTracks,
+      spotifyUrl: p.spotifyUrl,
+    })),
+    savedTracksSampled: savedTracks.length,
+    playlistTracksSampled: playlistTracks.length,
+  };
+}
+
 async function showHelp() {
   console.log(`
 Kasutus:
@@ -562,6 +787,9 @@ node spotify.js ai "90s eurodance"
 
 AI DJ:
 node spotify.js ai-dj "90s eurodance"
+
+Taste analysis:
+node spotify.js taste
 `);
 }
 
@@ -640,6 +868,11 @@ async function main() {
     return;
   }
 
+  if (command === "taste") {
+    console.log(await recommendFromTaste());
+    return;
+  }
+
   await showHelp();
 }
 
@@ -658,6 +891,11 @@ module.exports = {
   createPlaylistFromSearches,
   createAIPlaylist,
   createAIPlaylistAndPlay,
+  getMySavedTracks,
+  getMyPlaylists,
+  getPlaylistTracks,
+  buildTasteProfile,
+  recommendFromTaste,
   refreshAccessToken,
   api,
 };

@@ -9,7 +9,8 @@ const {
   createPlaylist,
   createAIPlaylist,
   createAIPlaylistAndPlay,
-  playPlaylistByName
+  playPlaylistByName,
+  recommendFromTaste
 } = require("./spotify");
 
 const app = express();
@@ -33,7 +34,9 @@ app.get("/authorize", (req, res) => {
     "playlist-read-private",
     "playlist-read-collaborative",
     "playlist-modify-private",
-    "playlist-modify-public"
+    "playlist-modify-public",
+    "user-library-read",
+    "user-top-read"
   ];
 
   const params = new URLSearchParams({
@@ -68,7 +71,9 @@ app.get("/callback", async (req, res) => {
         Authorization:
           "Basic " +
           Buffer.from(
-            process.env.SPOTIFY_CLIENT_ID + ":" + process.env.SPOTIFY_CLIENT_SECRET
+            process.env.SPOTIFY_CLIENT_ID +
+              ":" +
+              process.env.SPOTIFY_CLIENT_SECRET
           ).toString("base64")
       },
       body: params.toString()
@@ -136,6 +141,24 @@ app.get("/spotify/current", async (req, res) => {
     return sendError(res, 500, err);
   }
 });
+
+/* ------------ UUS ENDPOINT ------------ */
+
+app.get("/spotify/taste", async (req, res) => {
+  try {
+    const result = await recommendFromTaste();
+
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error("GET /spotify/taste error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
+/* -------------------------------------- */
 
 app.post("/spotify/playlist", async (req, res) => {
   try {
@@ -211,277 +234,6 @@ app.post("/spotify/playlist", async (req, res) => {
     });
   } catch (err) {
     console.error("POST /spotify/playlist error:", err);
-    return sendError(res, 500, err);
-  }
-});
-
-app.post("/spotify/ai-playlist", async (req, res) => {
-  try {
-    console.log("POST /spotify/ai-playlist body:", req.body);
-
-    const prompt =
-      typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
-
-    if (!prompt) {
-      return res.status(400).json({
-        success: false,
-        error: "Prompt missing"
-      });
-    }
-
-    const result = await createAIPlaylist(prompt);
-
-    return res.json({
-      success: true,
-      playlistName: result.name || `SpotifyGPT – ${prompt}`,
-      playlistUrl: result.url || null,
-      addedTracks:
-        typeof result.addedTracks === "number" ? result.addedTracks : 0,
-      foundTracks: result.foundTracks || [],
-      missingTracks: result.missingTracks || []
-    });
-  } catch (err) {
-    console.error("POST /spotify/ai-playlist error:", err);
-    return sendError(res, 500, err);
-  }
-});
-
-app.post("/spotify/ai-dj", async (req, res) => {
-  try {
-    console.log("POST /spotify/ai-dj body:", req.body);
-
-    const prompt =
-      typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
-
-    if (!prompt) {
-      return res.status(400).json({
-        success: false,
-        error: "Prompt missing"
-      });
-    }
-
-    const result = await createAIPlaylistAndPlay(prompt);
-
-    return res.json({
-      success: !!result.success,
-      playlistName: result.name || `SpotifyGPT – ${prompt}`,
-      playlistUrl: result.url || null,
-      playlistId: result.playlistId || null,
-      addedTracks:
-        typeof result.addedTracks === "number" ? result.addedTracks : 0,
-      foundTracks: result.foundTracks || [],
-      missingTracks: result.missingTracks || [],
-      playbackStarted: !!result.playbackStarted,
-      message: result.message || "AI DJ playlist loodi ja käivitati."
-    });
-  } catch (err) {
-    console.error("POST /spotify/ai-dj error:", err);
-    return sendError(res, 500, err);
-  }
-});
-
-app.get("/test-dj", (req, res) => {
-  res.send(`
-  <html>
-  <head>
-    <title>SpotifyGPT AI DJ Test</title>
-    <style>
-      body {
-        font-family: Arial;
-        padding: 40px;
-        background: #111;
-        color: white;
-      }
-      input {
-        width: 400px;
-        padding: 10px;
-        font-size: 16px;
-      }
-      button {
-        padding: 10px 20px;
-        font-size: 16px;
-        margin-left: 10px;
-        cursor: pointer;
-      }
-      pre {
-        margin-top: 20px;
-        background: #222;
-        padding: 20px;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-    </style>
-  </head>
-
-  <body>
-
-  <h1>SpotifyGPT AI DJ</h1>
-
-  <input id="prompt" placeholder="Näiteks: 90s eurodance" />
-  <button onclick="play()">Play AI DJ</button>
-
-  <pre id="result"></pre>
-
-  <script>
-  async function play() {
-    const prompt = document.getElementById("prompt").value;
-
-    const res = await fetch("/spotify/ai-dj", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ prompt })
-    });
-
-    const data = await res.json();
-
-    document.getElementById("result").textContent =
-      JSON.stringify(data, null, 2);
-  }
-  </script>
-
-  </body>
-  </html>
-  `);
-});
-
-app.post("/spotify/voice", async (req, res) => {
-  try {
-    const prompt =
-      typeof req.body?.prompt === "string"
-        ? req.body.prompt.toLowerCase().trim()
-        : "";
-
-    if (!prompt) {
-      return res.status(400).json({
-        success: false,
-        error: "Prompt missing"
-      });
-    }
-
-    console.log("VOICE COMMAND:", prompt);
-
-    try {
-      if (prompt.includes("pause") || prompt.includes("paus")) {
-        const result = await pauseMusic();
-        return res.json({
-          ...result,
-          action: "pause"
-        });
-      }
-
-      if (prompt.includes("next") || prompt.includes("järgmine")) {
-        const result = await nextTrack();
-        return res.json({
-          ...result,
-          action: "next"
-        });
-      }
-
-      if (prompt.includes("previous") || prompt.includes("eelmine")) {
-        const result = await previousTrack();
-        return res.json({
-          ...result,
-          action: "previous"
-        });
-      }
-
-      if (
-        prompt.includes("play my") ||
-        prompt.includes("play playlist") ||
-        prompt.includes("käivita minu")
-      ) {
-        const playlistName = prompt
-          .replace("play my", "")
-          .replace("play playlist", "")
-          .replace("käivita minu", "")
-          .replace("playlist", "")
-          .trim();
-
-        const result = await playPlaylistByName(playlistName);
-
-        return res.json({
-          success: !!result.success,
-          action: "play-playlist",
-          playlistName: result.playlistName || null,
-          playlistUrl: result.url || null,
-          playlistId: result.playlistId || null,
-          noActiveDevice: !!result.noActiveDevice,
-          message: result.message || null
-        });
-      }
-
-      if (
-        prompt.includes("play") ||
-        prompt.includes("resume") ||
-        prompt.includes("jätka")
-      ) {
-        const result = await playMusic();
-        return res.json({
-          ...result,
-          action: "play"
-        });
-      }
-
-      if (prompt.includes("mis mängib") || prompt.includes("what is playing")) {
-        const data = await getCurrentTrack();
-        return res.json({
-          success: true,
-          action: "current-track",
-          data
-        });
-      }
-
-      if (prompt.includes("loo playlist") || prompt.includes("create playlist")) {
-        const result = await createAIPlaylist(prompt);
-
-        return res.json({
-          success: true,
-          action: "playlist-created",
-          playlistName: result.name || null,
-          playlistUrl: result.url || null,
-          addedTracks:
-            typeof result.addedTracks === "number" ? result.addedTracks : 0,
-          foundTracks: result.foundTracks || [],
-          missingTracks: result.missingTracks || []
-        });
-      }
-
-      const result = await createAIPlaylistAndPlay(prompt);
-
-      return res.json({
-        success: !!result.success,
-        action: "ai-dj",
-        playlistName: result.name || null,
-        playlistUrl: result.url || null,
-        playlistId: result.playlistId || null,
-        addedTracks:
-          typeof result.addedTracks === "number" ? result.addedTracks : 0,
-        foundTracks: result.foundTracks || [],
-        missingTracks: result.missingTracks || [],
-        playbackStarted: !!result.playbackStarted,
-        message: result.message || null
-      });
-    } catch (err) {
-      const errorText = String(err?.message || err);
-
-      if (
-        errorText.includes("No active device found") ||
-        errorText.includes("NO_ACTIVE_DEVICE")
-      ) {
-        return res.json({
-          success: false,
-          noActiveDevice: true,
-          message:
-            "Spotify's ei ole aktiivset seadet. Ava Spotify iPhone'is, arvutis või mõnes muus seadmes ja proovi uuesti."
-        });
-      }
-
-      throw err;
-    }
-  } catch (err) {
-    console.error("VOICE error:", err);
     return sendError(res, 500, err);
   }
 });
