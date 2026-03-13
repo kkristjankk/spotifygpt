@@ -1085,7 +1085,9 @@ async function handleVoiceCommand(prompt) {
     }
 
     if (
-      /(play something like|music like|songs like|something like)/i.test(input)
+      /(play something like|play music like|play songs like|music like|songs like|something like)/i.test(
+        input
+      )
     ) {
       const artist = rawPrompt
         .replace(/^play something like\s+/i, "")
@@ -1122,6 +1124,7 @@ async function handleVoiceCommand(prompt) {
               playlistName: result.name || null,
               playlistUrl: result.url || null,
               playlistId: result.id || null,
+              addedTracks: result.addedTracks || 0,
               playbackStarted: false,
               noActiveDevice: true,
               message:
@@ -1138,6 +1141,7 @@ async function handleVoiceCommand(prompt) {
         playlistName: result.name || null,
         playlistUrl: result.url || null,
         playlistId: result.id || null,
+        addedTracks: result.addedTracks || 0,
         playbackStarted,
         message
       };
@@ -1566,34 +1570,6 @@ async function createSimilarArtistPlaylist(artistName) {
     url: playlist.external_urls?.spotify || null,
     addedTracks: addResult.addedTracks || uris.length
   };
-}
-  const related = await spotifyFetch(
-    "https://api.spotify.com/v1/artists/" +
-      artist.id +
-      "/related-artists"
-  );
-
-  const artists = related.artists.slice(0, 10);
-
-  const tracks = [];
-
-  for (const a of artists) {
-
-    const top = await spotifyFetch(
-      "https://api.spotify.com/v1/artists/" +
-        a.id +
-        "/top-tracks?market=US"
-    );
-
-    if (top.tracks.length) {
-      tracks.push(top.tracks[0].uri);
-    }
-  }
-
-  return createPlaylistFromUris(
-    `SpotifyGPT – Similar to ${artistName}`,
-    tracks
-  );
 }
 
 module.exports = {
