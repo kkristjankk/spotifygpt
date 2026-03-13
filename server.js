@@ -10,7 +10,8 @@ const {
   createAIPlaylist,
   createAIPlaylistAndPlay,
   playPlaylistByName,
-  recommendFromTaste
+  recommendFromTaste,
+  createTastePlaylist
 } = require("./spotify");
 
 const app = express();
@@ -146,14 +147,53 @@ app.get("/spotify/current", async (req, res) => {
 
 app.get("/spotify/taste", async (req, res) => {
   try {
-    const result = await recommendFromTaste();
+
+    const style = req.query.style || "";
+
+    const result = await recommendFromTaste({
+      stylePrompt: style
+    });
 
     return res.json({
       success: true,
+      style,
       ...result
     });
+
   } catch (err) {
     console.error("GET /spotify/taste error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
+app.post("/spotify/taste-playlist", async (req, res) => {
+  try {
+
+    const style =
+      req.body?.style ||
+      req.body?.prompt ||
+      req.body?.mood ||
+      "";
+
+    console.log("POST /spotify/taste-playlist style:", style);
+
+    const result = await createTastePlaylist(style);
+
+    return res.json({
+    success: true,
+    playlistName: result.playlistName,
+    playlistUrl: result.playlistUrl,
+    playlistId: result.playlistId,
+    addedTracks: result.addedTracks,
+    foundTracks: result.foundTracks || [],
+    missingTracks: result.missingTracks || [],
+    recommendedArtists: result.recommendedArtists,
+    tasteSummary: result.tasteSummary,
+    style
+   });
+
+  } catch (err) {
+    console.error("POST /spotify/taste-playlist error:", err);
     return sendError(res, 500, err);
   }
 });

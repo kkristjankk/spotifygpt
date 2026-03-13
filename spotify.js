@@ -665,11 +665,13 @@ async function recommendFromTaste({
   savedTracksLimit = 50,
   playlistsLimit = 8,
   tracksPerPlaylist = 30,
+  stylePrompt = "",
 } = {}) {
   if (!OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY missing");
   }
 
+  const cleanStyle = cleanText(stylePrompt);
   const savedTracks = await getMySavedTracks(savedTracksLimit);
   const playlists = await getMyPlaylists(playlistsLimit);
 
@@ -697,11 +699,14 @@ User music taste summary:
 - Top artists: ${tasteProfile.topArtists.map((a) => `${a.name} (${a.count})`).join(", ")}
 - Top tracks: ${tasteProfile.topTracks.slice(0, 10).map((t) => `${t.name} (${t.count})`).join(", ")}
 
+${cleanStyle ? `Additional instruction: keep the recommendations within this style or mood: ${cleanStyle}` : ""}
+
 Task:
 1. Describe the user's taste in 4-6 short bullet points.
 2. Recommend 10 similar artists.
 3. Recommend 15 songs in a similar style.
 4. Keep recommendations discoverable but still close to the user's taste.
+5. ${cleanStyle ? "Respect the requested style/mood while staying close to the user's taste." : "Stay close to the user's taste."}
 
 Return JSON in this exact shape:
 {
@@ -765,6 +770,43 @@ Return JSON in this exact shape:
     })),
     savedTracksSampled: savedTracks.length,
     playlistTracksSampled: playlistTracks.length,
+    stylePrompt: cleanStyle || null,
+  };
+}
+
+async function createTastePlaylist(stylePrompt = "") {
+  const cleanStyle = cleanText(stylePrompt);
+
+  console.log("Analyzing taste and generating playlist...");
+
+  const rec = await recommendFromTaste({
+    stylePrompt: cleanStyle,
+  });
+
+  if (!rec?.tracks?.length) {
+    throw new Error("AI ei tagastanud ühtegi lugu.");
+  }
+
+  const playlistName = cleanStyle
+    ? `SpotifyGPT – Your Taste (${cleanStyle})`
+    : "SpotifyGPT – Your Taste";
+
+  const result = await createPlaylistFromSearches(
+    playlistName,
+    rec.tracks
+  );
+
+  return {
+    success: true,
+    playlistName: result.name,
+    playlistUrl: result.url,
+    playlistId: result.playlistId,
+    addedTracks: result.addedTracks,
+    foundTracks: result.foundTracks || [],
+    missingTracks: result.missingTracks || [],
+    recommendedArtists: rec.artists,
+    tasteSummary: rec.summary,
+    stylePrompt: cleanStyle || null,
   };
 }
 
@@ -790,6 +832,11 @@ node spotify.js ai-dj "90s eurodance"
 
 Taste analysis:
 node spotify.js taste
+node spotify.js taste "melodic house"
+
+Taste playlist:
+node spotify.js taste-playlist
+node spotify.js taste-playlist "melodic house"
 `);
 }
 
@@ -869,7 +916,14 @@ async function main() {
   }
 
   if (command === "taste") {
-    console.log(await recommendFromTaste());
+    const style = process.argv.slice(3).join(" ");
+    console.log(await recommendFromTaste({ stylePrompt: style }));
+    return;
+  }
+
+  if (command === "taste-playlist") {
+    const style = process.argv.slice(3).join(" ");
+    console.log(await createTastePlaylist(style));
     return;
   }
 
@@ -896,6 +950,7 @@ module.exports = {
   getPlaylistTracks,
   buildTasteProfile,
   recommendFromTaste,
+  createTastePlaylist,
   refreshAccessToken,
   api,
 };
