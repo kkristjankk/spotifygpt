@@ -11,7 +11,8 @@ const {
   createAIPlaylistAndPlay,
   playPlaylistByName,
   recommendFromTaste,
-  createTastePlaylist
+  createTastePlaylist,
+  handleVoiceCommand
 } = require("./spotify");
 
 const app = express();
@@ -143,11 +144,8 @@ app.get("/spotify/current", async (req, res) => {
   }
 });
 
-/* ------------ UUS ENDPOINT ------------ */
-
 app.get("/spotify/taste", async (req, res) => {
   try {
-
     const style = req.query.style || "";
 
     const result = await recommendFromTaste({
@@ -159,7 +157,6 @@ app.get("/spotify/taste", async (req, res) => {
       style,
       ...result
     });
-
   } catch (err) {
     console.error("GET /spotify/taste error:", err);
     return sendError(res, 500, err);
@@ -168,7 +165,6 @@ app.get("/spotify/taste", async (req, res) => {
 
 app.post("/spotify/taste-playlist", async (req, res) => {
   try {
-
     const style =
       req.body?.style ||
       req.body?.prompt ||
@@ -180,25 +176,22 @@ app.post("/spotify/taste-playlist", async (req, res) => {
     const result = await createTastePlaylist(style);
 
     return res.json({
-    success: true,
-    playlistName: result.playlistName,
-    playlistUrl: result.playlistUrl,
-    playlistId: result.playlistId,
-    addedTracks: result.addedTracks,
-    foundTracks: result.foundTracks || [],
-    missingTracks: result.missingTracks || [],
-    recommendedArtists: result.recommendedArtists,
-    tasteSummary: result.tasteSummary,
-    style
-   });
-
+      success: true,
+      playlistName: result.playlistName,
+      playlistUrl: result.playlistUrl,
+      playlistId: result.playlistId,
+      addedTracks: result.addedTracks,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || [],
+      recommendedArtists: result.recommendedArtists,
+      tasteSummary: result.tasteSummary,
+      style
+    });
   } catch (err) {
     console.error("POST /spotify/taste-playlist error:", err);
     return sendError(res, 500, err);
   }
 });
-
-/* -------------------------------------- */
 
 app.post("/spotify/playlist", async (req, res) => {
   try {
@@ -274,6 +267,83 @@ app.post("/spotify/playlist", async (req, res) => {
     });
   } catch (err) {
     console.error("POST /spotify/playlist error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
+app.post("/spotify/ai-playlist", async (req, res) => {
+  try {
+    const prompt = String(req.body?.prompt || "").trim();
+
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: "Puudub prompt."
+      });
+    }
+
+    const result = await createAIPlaylist(prompt);
+
+    return res.json({
+      success: true,
+      playlistName: result.name || `SpotifyGPT – ${prompt}`,
+      playlistUrl: result.url || null,
+      playlistId: result.playlistId || null,
+      addedTracks: result.addedTracks || 0,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || []
+    });
+  } catch (err) {
+    console.error("POST /spotify/ai-playlist error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
+app.post("/spotify/ai-dj", async (req, res) => {
+  try {
+    const prompt = String(req.body?.prompt || "").trim();
+
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: "Puudub prompt."
+      });
+    }
+
+    const result = await createAIPlaylistAndPlay(prompt);
+
+    return res.json({
+      success: !!result.success,
+      playlistName: result.name || `SpotifyGPT – ${prompt}`,
+      playlistUrl: result.url || null,
+      playlistId: result.playlistId || null,
+      addedTracks: result.addedTracks || 0,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || [],
+      playbackStarted: !!result.playbackStarted,
+      message: result.message || null
+    });
+  } catch (err) {
+    console.error("POST /spotify/ai-dj error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
+app.post("/spotify/voice", async (req, res) => {
+  try {
+    const prompt = String(req.body?.prompt || "").trim();
+
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing prompt"
+      });
+    }
+
+    const result = await handleVoiceCommand(prompt);
+    return res.json(result);
+  } catch (err) {
+    console.error("POST /spotify/voice error:", err);
     return sendError(res, 500, err);
   }
 });

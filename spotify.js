@@ -810,6 +810,329 @@ async function createTastePlaylist(stylePrompt = "") {
   };
 }
 
+/* -------------------- VOICE COMMANDS -------------------- */
+
+function extractStyleFromPrompt(prompt) {
+  const text = cleanText(prompt);
+
+  let result = text
+    .replace(/^play\s+/i, "")
+    .replace(/^pane\s+/i, "")
+    .replace(/^make me\s+/i, "")
+    .replace(/^create\s+/i, "")
+    .replace(/^tee mulle\s+/i, "")
+    .replace(/^loo mulle\s+/i, "")
+    .replace(/^generate\s+/i, "")
+    .replace(/\bplaylist\b/gi, "")
+    .replace(/\bmu playlist\b/gi, "")
+    .replace(/\bmy playlist\b/gi, "")
+    .replace(/\bplease\b/gi, "")
+    .trim();
+
+  return cleanText(result);
+}
+
+function extractPlaylistNameFromPrompt(prompt) {
+  const text = cleanText(prompt);
+
+  const quotedMatch = text.match(/["“](.+?)["”]/);
+  if (quotedMatch?.[1]) {
+    return cleanText(quotedMatch[1]);
+  }
+
+  let result = text
+    .replace(/^play\s+/i, "")
+    .replace(/^pane mängima\s+/i, "")
+    .replace(/^käivita\s+/i, "")
+    .replace(/^start\s+/i, "")
+    .replace(/\bmy\b/gi, "")
+    .replace(/\bmu\b/gi, "")
+    .replace(/\bplaylist\b/gi, "")
+    .trim();
+
+  return cleanText(result);
+}
+
+function isNoActiveDeviceError(err) {
+  const errorText = String(err?.message || err || "");
+  return (
+    errorText.includes("No active device found") ||
+    errorText.includes("NO_ACTIVE_DEVICE")
+  );
+}
+
+function buildNoActiveDeviceResponse(action, extra = {}) {
+  return {
+    success: false,
+    action,
+    noActiveDevice: true,
+    message:
+      "Spotify's ei olnud aktiivset seadet. Ava Spotify äpp telefonis või arvutis ja proovi uuesti.",
+    ...extra
+  };
+}
+
+async function handleVoiceCommand(prompt) {
+  const input = cleanText(prompt).toLowerCase();
+
+  if (!input) {
+    return {
+      success: false,
+      action: "unknown",
+      message: "Käsk puudub."
+    };
+  }
+
+  try {
+    if (
+      /(mis lugu mängib|what('?s| is) playing|current track|currently playing)/i.test(
+        input
+      )
+    ) {
+      const data = await getCurrentTrack();
+      return {
+        success: true,
+        action: "current",
+        message: data?.message
+          ? data.message
+          : `Praegu mängib: ${data.artists} – ${data.track}`,
+        data
+      };
+    }
+
+    if (/(pause|pane pausile|stop music|stop playback|peata muusika)/i.test(input)) {
+      const result = await pauseMusic();
+      return {
+        success: true,
+        action: "pause",
+        message: result.message
+      };
+    }
+
+    if (/(next|skip|järgmine|edasi järgmise loo juurde)/i.test(input)) {
+      const result = await nextTrack();
+      return {
+        success: true,
+        action: "next",
+        message: result.message
+      };
+    }
+
+    if (/(previous|go back|eelmine|tagasi eelmise loo juurde)/i.test(input)) {
+      const result = await previousTrack();
+      return {
+        success: true,
+        action: "previous",
+        message: result.message
+      };
+    }
+
+    if (
+      /(play my|play playlist|pane playlist|käivita playlist|mängi playlisti)/i.test(
+        input
+      )
+    ) {
+      const playlistName = extractPlaylistNameFromPrompt(prompt);
+
+      if (!playlistName) {
+        return {
+          success: false,
+          action: "play_playlist_by_name",
+          message: "Playlisti nime ei õnnestunud tuvastada."
+        };
+      }
+
+      const result = await playPlaylistByName(playlistName);
+
+      return {
+        success: !!result.success,
+        action: "play_playlist_by_name",
+        playlistName: result.playlistName || null,
+        playlistUrl: result.url || null,
+        playlistId: result.playlistId || null,
+        noActiveDevice: !!result.noActiveDevice,
+        message: result.message
+      };
+    }
+
+    if (
+      /(my taste|mu maitse|based on my taste|minu maitse põhjal)/i.test(input) &&
+      /(play|mängi|tee|create|make|loo)/i.test(input)
+    ) {
+      const style = extractStyleFromPrompt(prompt)
+        .replace(/\bbased on my taste\b/gi, "")
+        .replace(/\bmy taste\b/gi, "")
+        .replace(/\bminu maitse põhjal\b/gi, "")
+        .replace(/\bmu maitse\b/gi, "")
+        .trim();
+
+      const result = await createTastePlaylist(style);
+
+      let playbackStarted = false;
+      let message =
+        style
+          ? `Lõin taste-playlisti stiilis "${style}".`
+          : "Lõin sinu maitse põhjal playlisti.";
+
+      if (result?.playlistId) {
+        try {
+          await playPlaylist(result.playlistId);
+          playbackStarted = true;
+          message =
+            style
+              ? `Lõin ja panin mängima sinu maitse põhjal playlisti stiilis "${style}".`
+              : "Lõin ja panin mängima sinu maitse põhjal playlisti.";
+        } catch (playErr) {
+          if (isNoActiveDeviceError(playErr)) {
+            return {
+              success: true,
+              action: "taste_playlist",
+              playlistName: result.playlistName || null,
+              playlistUrl: result.playlistUrl || null,
+              playlistId: result.playlistId || null,
+              addedTracks: result.addedTracks || 0,
+              foundTracks: result.foundTracks || [],
+              missingTracks: result.missingTracks || [],
+              playbackStarted: false,
+              noActiveDevice: true,
+              message:
+                "Playlist loodi, aga Spotify's ei olnud aktiivset seadet. Ava Spotify äpp ja proovi uuesti."
+            };
+          }
+          throw playErr;
+        }
+      }
+
+      return {
+        success: true,
+        action: "taste_playlist",
+        playlistName: result.playlistName || null,
+        playlistUrl: result.playlistUrl || null,
+        playlistId: result.playlistId || null,
+        addedTracks: result.addedTracks || 0,
+        foundTracks: result.foundTracks || [],
+        missingTracks: result.missingTracks || [],
+        playbackStarted,
+        message
+      };
+    }
+
+    if (
+      /(recommend|soovita|recommendation|soovitus)/i.test(input) &&
+      /(my taste|mu maitse|based on my taste|minu maitse põhjal)/i.test(input)
+    ) {
+      const style = extractStyleFromPrompt(prompt)
+        .replace(/\bbased on my taste\b/gi, "")
+        .replace(/\bmy taste\b/gi, "")
+        .replace(/\bminu maitse põhjal\b/gi, "")
+        .replace(/\bmu maitse\b/gi, "")
+        .trim();
+
+      const result = await recommendFromTaste({
+        stylePrompt: style
+      });
+
+      return {
+        success: true,
+        action: "taste_recommendation",
+        message:
+          style
+            ? `Leidsin soovitusi sinu maitse põhjal stiilis "${style}".`
+            : "Leidsin soovitusi sinu maitse põhjal.",
+        data: result
+      };
+    }
+
+    if (
+      /(create and play|make and play|generate and play|tee ja pane mängima|loo ja pane mängima)/i.test(
+        input
+      )
+    ) {
+      const promptText = extractStyleFromPrompt(prompt) || prompt;
+      const result = await createAIPlaylistAndPlay(promptText);
+
+      return {
+        success: !!result.success,
+        action: "ai_dj",
+        playlistName: result.name || null,
+        playlistUrl: result.url || null,
+        playlistId: result.playlistId || null,
+        addedTracks: result.addedTracks || 0,
+        foundTracks: result.foundTracks || [],
+        missingTracks: result.missingTracks || [],
+        playbackStarted: !!result.playbackStarted,
+        message: result.message || "AI DJ playlist valmis."
+      };
+    }
+
+    if (
+      /^(play|mängi|pane mängima)\s+.+/i.test(input) &&
+      !/(playlist|lugu|song|track)/i.test(input)
+    ) {
+      const promptText = extractStyleFromPrompt(prompt) || prompt;
+      const result = await createAIPlaylistAndPlay(promptText);
+
+      return {
+        success: !!result.success,
+        action: "ai_dj",
+        playlistName: result.name || null,
+        playlistUrl: result.url || null,
+        playlistId: result.playlistId || null,
+        addedTracks: result.addedTracks || 0,
+        foundTracks: result.foundTracks || [],
+        missingTracks: result.missingTracks || [],
+        playbackStarted: !!result.playbackStarted,
+        message: result.message || "AI DJ playlist valmis."
+      };
+    }
+
+    if (
+      /(create|make|generate|tee|loo)/i.test(input) &&
+      /(playlist|mix|miks|list)/i.test(input)
+    ) {
+      const promptText = extractStyleFromPrompt(prompt) || prompt;
+      const result = await createAIPlaylist(promptText);
+
+      return {
+        success: !!result.success,
+        action: "create_ai_playlist",
+        playlistName: result.name || null,
+        playlistUrl: result.url || null,
+        playlistId: result.playlistId || null,
+        addedTracks: result.addedTracks || 0,
+        foundTracks: result.foundTracks || [],
+        missingTracks: result.missingTracks || [],
+        message: `Playlist "${result.name || promptText}" on loodud.`
+      };
+    }
+
+    if (/(resume|continue|play|jätka|pane käima|käivita muusika)/i.test(input)) {
+      const result = await playMusic();
+      return {
+        success: true,
+        action: "play",
+        message: result.message
+      };
+    }
+
+    return {
+      success: false,
+      action: "unknown",
+      message: "Ma ei saanud käsust aru."
+    };
+  } catch (err) {
+    if (isNoActiveDeviceError(err)) {
+      return buildNoActiveDeviceResponse("voice");
+    }
+
+    return {
+      success: false,
+      action: "error",
+      message: String(err?.message || err)
+    };
+  }
+}
+
 async function showHelp() {
   console.log(`
 Kasutus:
@@ -951,6 +1274,7 @@ module.exports = {
   buildTasteProfile,
   recommendFromTaste,
   createTastePlaylist,
+  handleVoiceCommand,
   refreshAccessToken,
   api,
 };
