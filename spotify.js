@@ -1001,7 +1001,8 @@ function buildNoActiveDeviceResponse(action, extra = {}) {
 }
 
 async function handleVoiceCommand(prompt) {
-  const input = cleanText(prompt).toLowerCase();
+  const rawPrompt = cleanText(prompt);
+  const input = rawPrompt.toLowerCase();
 
   if (!input) {
     return {
@@ -1060,7 +1061,7 @@ async function handleVoiceCommand(prompt) {
         input
       )
     ) {
-      const playlistName = extractPlaylistNameFromPrompt(prompt);
+      const playlistName = extractPlaylistNameFromPrompt(rawPrompt);
 
       if (!playlistName) {
         return {
@@ -1084,10 +1085,69 @@ async function handleVoiceCommand(prompt) {
     }
 
     if (
+      /(play something like|music like|songs like|something like)/i.test(input)
+    ) {
+      const artist = rawPrompt
+        .replace(/^play something like\s+/i, "")
+        .replace(/^play music like\s+/i, "")
+        .replace(/^play songs like\s+/i, "")
+        .replace(/^music like\s+/i, "")
+        .replace(/^songs like\s+/i, "")
+        .replace(/^something like\s+/i, "")
+        .trim();
+
+      if (!artist) {
+        return {
+          success: false,
+          action: "similar_artist_playlist",
+          message: "Artisti nime ei õnnestunud tuvastada."
+        };
+      }
+
+      const result = await createSimilarArtistPlaylist(artist);
+
+      let playbackStarted = false;
+      let message = `Lõin playlisti artisti "${artist}" sarnase muusika põhjal.`;
+
+      if (result?.id) {
+        try {
+          await playPlaylist(result.id);
+          playbackStarted = true;
+          message = `Lõin ja panin mängima playlisti artisti "${artist}" sarnase muusika põhjal.`;
+        } catch (playErr) {
+          if (isNoActiveDeviceError(playErr)) {
+            return {
+              success: true,
+              action: "similar_artist_playlist",
+              playlistName: result.name || null,
+              playlistUrl: result.url || null,
+              playlistId: result.id || null,
+              playbackStarted: false,
+              noActiveDevice: true,
+              message:
+                "Playlist loodi, aga Spotify's ei olnud aktiivset seadet. Ava Spotify äpp ja proovi uuesti."
+            };
+          }
+          throw playErr;
+        }
+      }
+
+      return {
+        success: true,
+        action: "similar_artist_playlist",
+        playlistName: result.name || null,
+        playlistUrl: result.url || null,
+        playlistId: result.id || null,
+        playbackStarted,
+        message
+      };
+    }
+
+    if (
       /(my taste|mu maitse|based on my taste|minu maitse põhjal)/i.test(input) &&
       /(play|mängi|tee|create|make|loo)/i.test(input)
     ) {
-      const style = extractStyleFromPrompt(prompt)
+      const style = extractStyleFromPrompt(rawPrompt)
         .replace(/\bbased on my taste\b/gi, "")
         .replace(/\bmy taste\b/gi, "")
         .replace(/\bminu maitse põhjal\b/gi, "")
@@ -1149,7 +1209,7 @@ async function handleVoiceCommand(prompt) {
       /(recommend|soovita|recommendation|soovitus)/i.test(input) &&
       /(my taste|mu maitse|based on my taste|minu maitse põhjal)/i.test(input)
     ) {
-      const style = extractStyleFromPrompt(prompt)
+      const style = extractStyleFromPrompt(rawPrompt)
         .replace(/\bbased on my taste\b/gi, "")
         .replace(/\bmy taste\b/gi, "")
         .replace(/\bminu maitse põhjal\b/gi, "")
@@ -1176,7 +1236,7 @@ async function handleVoiceCommand(prompt) {
         input
       )
     ) {
-      const promptText = extractStyleFromPrompt(prompt) || prompt;
+      const promptText = extractStyleFromPrompt(rawPrompt) || rawPrompt;
       const result = await createAIPlaylistAndPlay(promptText);
 
       return {
@@ -1193,24 +1253,11 @@ async function handleVoiceCommand(prompt) {
       };
     }
 
-    if (prompt.includes("like ")) {
-      const artist = prompt.split("like ")[1];
-      const result = await createSimilarArtistPlaylist(artist);
-     
-      return {
-       success: true,
-       action: "similar_artist_playlist",
-       playlistName: result.name,
-       playlistUrl: result.url,
-       playbackStarted: true
-     };
-    }
-
     if (
       /(discover|avasta|something new|midagi uut|discover weekly)/i.test(input) &&
       /(play|mängi|tee|create|make|loo|generate)/i.test(input)
     ) {
-      const style = extractStyleFromPrompt(prompt)
+      const style = extractStyleFromPrompt(rawPrompt)
         .replace(/^me\b/gi, "")
         .replace(/\bdiscover weekly\b/gi, "")
         .replace(/\bsomething new\b/gi, "")
@@ -1274,7 +1321,7 @@ async function handleVoiceCommand(prompt) {
       /^(play|mängi|pane mängima)\s+.+/i.test(input) &&
       !/(playlist|lugu|song|track)/i.test(input)
     ) {
-      const promptText = extractStyleFromPrompt(prompt) || prompt;
+      const promptText = extractStyleFromPrompt(rawPrompt) || rawPrompt;
       const result = await createAIPlaylistAndPlay(promptText);
 
       return {
@@ -1295,7 +1342,7 @@ async function handleVoiceCommand(prompt) {
       /(create|make|generate|tee|loo)/i.test(input) &&
       /(playlist|mix|miks|list)/i.test(input)
     ) {
-      const promptText = extractStyleFromPrompt(prompt) || prompt;
+      const promptText = extractStyleFromPrompt(rawPrompt) || rawPrompt;
       const result = await createAIPlaylist(promptText);
 
       return {
@@ -1469,7 +1516,6 @@ async function main() {
 }
 
 async function createSimilarArtistPlaylist(artistName) {
-
   const search = await api(
     "https://api.spotify.com/v1/search?q=" +
       encodeURIComponent(artistName) +
@@ -1489,11 +1535,9 @@ async function createSimilarArtistPlaylist(artistName) {
   );
 
   const artists = related?.artists?.slice(0, 10) || [];
-
   const uris = [];
 
   for (const a of artists) {
-
     const top = await api(
       "https://api.spotify.com/v1/artists/" +
         a.id +
@@ -1523,7 +1567,6 @@ async function createSimilarArtistPlaylist(artistName) {
     addedTracks: addResult.addedTracks || uris.length
   };
 }
-
   const related = await spotifyFetch(
     "https://api.spotify.com/v1/artists/" +
       artist.id +
