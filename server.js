@@ -12,6 +12,7 @@ const {
   playPlaylistByName,
   recommendFromTaste,
   createTastePlaylist,
+  createDiscoverPlaylist,
   handleVoiceCommand
 } = require("./spotify");
 
@@ -189,6 +190,36 @@ app.post("/spotify/taste-playlist", async (req, res) => {
     });
   } catch (err) {
     console.error("POST /spotify/taste-playlist error:", err);
+    return sendError(res, 500, err);
+  }
+});
+
+app.post("/spotify/discover", async (req, res) => {
+  try {
+    const style =
+      req.body?.style ||
+      req.body?.prompt ||
+      req.body?.mood ||
+      "";
+
+    console.log("POST /spotify/discover style:", style);
+
+    const result = await createDiscoverPlaylist(style);
+
+    return res.json({
+      success: true,
+      playlistName: result.playlistName,
+      playlistUrl: result.playlistUrl,
+      playlistId: result.playlistId,
+      addedTracks: result.addedTracks,
+      foundTracks: result.foundTracks || [],
+      missingTracks: result.missingTracks || [],
+      recommendedArtists: result.recommendedArtists || [],
+      discoverSummary: result.discoverSummary || [],
+      style
+    });
+  } catch (err) {
+    console.error("POST /spotify/discover error:", err);
     return sendError(res, 500, err);
   }
 });

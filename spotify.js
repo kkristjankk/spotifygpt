@@ -1198,6 +1198,7 @@ async function handleVoiceCommand(prompt) {
       /(play|mängi|tee|create|make|loo|generate)/i.test(input)
     ) {
       const style = extractStyleFromPrompt(prompt)
+        .replace(/^me\b/gi, "")
         .replace(/\bdiscover weekly\b/gi, "")
         .replace(/\bsomething new\b/gi, "")
         .replace(/\bmidagi uut\b/gi, "")
